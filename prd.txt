@@ -1,0 +1,146 @@
+PRD — MVP: JD→Résumé Fit Map, Change Advisor, Interviewer Lens (+ Company Behaviour), 7-Day Prep Kit, and Interview Coach
+
+
+1) Problem & Opportunity
+
+Candidates waste cycles tailoring résumés and prepping generically. Recruiters judge on evidence against the JD and structured interview signals. We deliver a single-session workflow that diagnoses fit, prescribes precise edits, explains what interviewers will measure (and why), adds company-behaviour context inferred from the JD, then drives a targeted, 7-day prep plan with per-stage coaching.
+
+2) Goals & Success Metrics
+
+North Star: Increase interview callback rate over the user’s 60-day self-reported baseline.
+
+Primary KPIs
+
+Callback uplift % (post-MVP cohort vs. user baseline).
+
+Change adoption rate (% of suggested bullets accepted or saved).
+
+Prep completion (% users who complete ≥80% of 7-day plan).
+
+Time-to-first insight (TTFI) ≤ 60s; full run ≤ 180s.
+
+Secondary
+
+NPS after first mock/coach usage.
+
+Mobile Lighthouse score ≥ 90 (Perf/Best Practices/Accessibility).
+
+3) Users & Personas
+
+Junior–Mid SWE/DS/SRE/PM (0–6 yrs).
+
+Experienced ICs (7–12 yrs).
+
+Career centers/bootcamps (post-MVP, read-only dashboards).
+
+4) In-Scope (MVP)
+
+Fit Map — “fit / borderline / not-fit” with Overlap, Under-evidenced, Gaps (provenance shown).
+
+Change Advisor — precise, ATS-safe diff-style guidance only (never edits files): target section, current bullet, suggested bullet, reason, metric to add, artifact to link, confidence, JD/resume citations.
+
+Interviewer Lens (+ Company Behaviour) — competencies, likely interview formats/stages, and behaviour cues inferred only from JD (e.g., ownership, process, regulated, on-call).
+
+7-Day Prep Kit (deep) — drills mapped to top gaps; each task includes inputs, practice task, rubric, expected artifact, timebox, and one company-behaviour reference.
+
+Interview Coach (per stage) — recruiter screen, tech screen, system design, behavioral, hiring manager, onsite/loop, offer/negotiation. Each has what’s measured, scaffold, failure modes, and follow-ups.
+
+Not an AI wrapper — deterministic heuristics and hand-authored rubrics precede/model calls; every suggestion shows “why” and citations to JD/resume spans.
+
+OpenAI API integration  — used for structured JSON filling (low temp), gated by rules; model/version logged.
+
+Out of Scope (MVP): Email job tracking, calendar parsing, résumé file regeneration, marketplace for human mocks.
+
+5) User Stories
+
+As a candidate, I paste a JD URL and upload my résumé to see a Fit Map and “fit / not-fit” in ≤60s.
+
+As a candidate, I get at least 6 diff-style Change Advisor suggestions with metrics and artifact prompts; I can copy bullets or mark accepted/dismissed.
+
+As a candidate, I open an Interviewer Lens showing what will be measured, likely formats, and 2–5 company-behaviour cues tied to JD phrases.
+
+As a candidate, I receive a 7-day plan where each task has inputs, rubric, expected artifact, and a timebox.
+
+As a candidate, I view stage-specific “Bade Bhaiya” cards before each stage.
+
+As a candidate, I can see why each suggestion exists (JD/resume citations or rule IDs).
+
+6) Feature Requirements
+6.1 Fit Map
+
+Buckets: overlap[], under_evidenced[], gaps[].
+
+Overall: fit | borderline | not_fit (rule-based first; model only if uncertain).
+
+Provenance: show JD/resume spans that triggered items; display confidence.
+
+6.2 Change Advisor (advice only)
+
+Each suggestion: {target_section, current_bullet, suggested_bullet<=28w, reason, required_metric, evidence_to_attach, keyword_mirror?, confidence, jd_spans[], resume_spans[]}.
+
+ATS Pre-flight warnings: tables/columns/text boxes/images/inconsistent headings/over-designed PDF/low-contrast links.
+
+Authenticity: require metric or artifact in ≥80% of suggestions; flag clichés.
+
+6.3 Interviewer Lens (+ Company Behaviour)
+
+4–6 competencies (what good looks like).
+
+2–4 likely formats/stages.
+
+2–5 behaviour cues only from JD language; show the phrases that implied them.
+
+6.4 7-Day Prep Kit (deep, role & company-aware)
+
+Exactly 7 days; each task includes: gap_ref, company_behaviour_ref, inputs, practice_task, rubric (1–4), expected_artifact, timebox_min.
+
+Day 3 & Day 6 checkpoints: reassess top gaps and adjust Day 7.
+
+6.5  Coach (per stage)
+
+Stage cards: recruiter, tech screen, system design, behavioral, hiring manager, onsite/loop, offer.
+
+Each card includes: what_measured, scaffold, failure_modes, two_followups.
+
+7) Non-Functional Requirements
+
+Performance: TTFI ≤ 60s; P95 full run ≤ 180s with parallel model calls.
+
+Reliability: 99.5% monthly uptime.
+
+Security/Privacy: TLS, KMS at rest; default 30-day retention on raw uploads; self-serve delete; PII redaction in logs.
+
+Accessibility: WCAG AA (keyboard nav, contrast).
+
+UX: Clean, responsive, modern UI; mobile and desktop first-class.
+
+8) Data & Contracts (high-level)
+
+Tables: job_run, jd, resume, fit_map, change_advisor, lens, prep_kit, mentor, ruleset_version, model_version.
+
+
+9) Risks & Mitigations
+
+Generic AI tone: deterministic rules, strict schemas, low temperature, linting for numbers/clichés.
+
+Over-fitting to keywords: emphasize metrics/artifacts; cap keyword mirrors.
+
+Latency spikes: parallelize calls; cache JD analyses; cap input size.
+
+Legal/ToS: allow “paste JD” when fetch is disallowed.
+
+10) Acceptance Criteria
+
+Run returns overall_fit, ≥5 items across overlap/under_evidenced/gaps, all with provenance.
+
+Change Advisor shows ≥6 suggestions with metric/artifact prompts; no file writes.
+
+Lens lists ≥4 competencies, ≥2 formats, ≥2 behaviour cues with JD citations.
+
+Prep Kit has 7 days; each task includes inputs, rubric, artifact, timebox, and one behaviour reference.
+
+Coach includes 7 stage cards with what’s measured, scaffold, failure modes, follow-ups.
+
+TTFI ≤ 60s; full run ≤ 180s on reference inputs.
+
+Deployed on AWS stack described below; Lighthouse mobile ≥ 90.

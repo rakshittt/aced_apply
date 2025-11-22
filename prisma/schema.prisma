@@ -1,0 +1,253 @@
+// Prisma Schema for JD→Resume Fit Analysis Platform
+// MVP Database Design
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CORE MODELS
+// ============================================================================
+
+model JobRun {
+  id        String   @id @default(cuid())
+  userId    String?  // Optional for MVP (anonymous usage)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime // 30-day retention
+
+  // Input data
+  jdUrl    String? // Optional: URL to job posting
+  jdText   String  @db.Text
+  resumeS3Key String
+  resumeText  String @db.Text
+
+  // Metadata
+  status         RunStatus @default(PROCESSING)
+  ttfi           Int?      // Time to first insight (ms)
+  totalDuration  Int?      // Total run time (ms)
+  modelVersion   String    @default("gpt-4o-2024-08-06")
+  rulesetVersion String    @default("1.0.0")
+
+  // Relations
+  jd              JobDescription   @relation(fields: [jdId], references: [id])
+  jdId            String
+  resume          Resume           @relation(fields: [resumeId], references: [id])
+  resumeId        String
+  fitMap          FitMap?
+  changeAdvisor   ChangeAdvisor?
+  lens            InterviewerLens?
+  prepKit         PrepKit?
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@index([status])
+}
+
+model JobDescription {
+  id        String   @id @default(cuid())
+  rawText   String   @db.Text
+  parsedAt  DateTime @default(now())
+
+  // Structured extraction
+  title            String
+  company          String?
+  location         String?
+  requirements     String[] // Array of requirements
+  responsibilities String[]
+  qualifications   String[]
+  keywords         String[]
+
+  // Company behavior signals inferred from JD
+  behaviorCues Json // {ownership: true, regulated: false, onCall: true, ...}
+
+  jobRuns JobRun[]
+
+  @@index([company])
+  @@index([parsedAt])
+}
+
+model Resume {
+  id         String   @id @default(cuid())
+  s3Key      String   @unique
+  rawText    String   @db.Text
+  uploadedAt DateTime @default(now())
+
+  // Parsed sections
+  sections Json // {experience: [...], skills: [...], education: [...]}
+  bullets  Json[] // Array of all bullets with metadata
+
+  jobRuns JobRun[]
+
+  @@index([uploadedAt])
+}
+
+// ============================================================================
+// ANALYSIS RESULTS
+// ============================================================================
+
+model FitMap {
+  id         String   @id @default(cuid())
+  jobRunId   String   @unique
+  jobRun     JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  overallFit FitLevel // FIT | BORDERLINE | NOT_FIT
+  confidence Float
+
+  // Analysis results (JSON arrays with structured data)
+  overlap        Json[] // [{skill, jdSpan, resumeSpan, confidence}]
+  underEvidenced Json[] // [{skill, resumeSpan, reason}]
+  gaps           Json[] // [{skill, jdSpan, severity}]
+
+  generatedAt DateTime @default(now())
+
+  @@index([generatedAt])
+}
+
+model ChangeAdvisor {
+  id         String   @id @default(cuid())
+  jobRunId   String   @unique
+  jobRun     JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  suggestions ChangeAdvisorSuggestion[]
+  atsWarnings Json[] // [{type, severity, location, description}]
+
+  generatedAt DateTime @default(now())
+
+  @@index([generatedAt])
+}
+
+model ChangeAdvisorSuggestion {
+  id        String   @id @default(cuid())
+  advisorId String
+  advisor   ChangeAdvisor @relation(fields: [advisorId], references: [id], onDelete: Cascade)
+
+  // Suggestion details
+  targetSection   String   // "Experience", "Skills", etc.
+  currentBullet   String   @db.Text
+  suggestedBullet String   @db.Text // Max 28 words
+  reason          String   @db.Text
+
+  // Enhancement prompts
+  requiredMetric   String?
+  evidenceToAttach String?
+  keywordMirror    Boolean @default(false)
+  confidence       Float
+
+  // Provenance (citations to JD/resume)
+  jdSpans     Json[] // [{text, start, end}]
+  resumeSpans Json[] // [{text, section, index}]
+
+  // User feedback
+  status SuggestionStatus @default(PENDING) // PENDING | ACCEPTED | DISMISSED
+
+  @@index([advisorId])
+  @@index([status])
+}
+
+model InterviewerLens {
+  id       String   @id @default(cuid())
+  jobRunId String   @unique
+  jobRun   JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  // What interviewers will measure
+  competencies  Json[] // [{name, description, whatGoodLooksLike}]
+  likelyFormats Json[] // [{stage, format, duration}]
+  behaviorCues  Json[] // [{cue, jdPhrases[], implication}]
+
+  generatedAt DateTime @default(now())
+
+  @@index([generatedAt])
+}
+
+model PrepKit {
+  id       String   @id @default(cuid())
+  jobRunId String   @unique
+  jobRun   JobRun   @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+
+  days PrepDay[]
+
+  generatedAt DateTime @default(now())
+
+  @@index([generatedAt])
+}
+
+model PrepDay {
+  id        String   @id @default(cuid())
+  prepKitId String
+  prepKit   PrepKit  @relation(fields: [prepKitId], references: [id], onDelete: Cascade)
+
+  dayNumber          Int    // 1-7
+  gapRef             String // Reference to gap from FitMap
+  companyBehaviorRef String?
+
+  // Task details
+  inputs           String @db.Text
+  practiceTask     String @db.Text
+  rubric           Json   // {level1, level2, level3, level4}
+  expectedArtifact String
+  timeboxMin       Int
+
+  // User progress tracking
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  @@unique([prepKitId, dayNumber])
+  @@index([prepKitId])
+  @@index([completed])
+}
+
+// ============================================================================
+// INTERVIEW COACH (Pre-seeded data)
+// ============================================================================
+
+model CoachCard {
+  id    String         @id @default(cuid())
+  stage InterviewStage @unique // RECRUITER, TECH_SCREEN, etc.
+
+  whatMeasured  String[]        // Array of evaluation criteria
+  scaffold      String   @db.Text // Framework/structure for the stage
+  failureModes  String[]        // Common mistakes
+  followUps     String[]        // Exactly 2 follow-up questions
+
+  updatedAt DateTime @updatedAt
+
+  @@index([stage])
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum RunStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum FitLevel {
+  FIT
+  BORDERLINE
+  NOT_FIT
+}
+
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  DISMISSED
+}
+
+enum InterviewStage {
+  RECRUITER
+  TECH_SCREEN
+  SYSTEM_DESIGN
+  BEHAVIORAL
+  HIRING_MANAGER
+  ONSITE
+  OFFER
+}
