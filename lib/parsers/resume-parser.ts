@@ -21,23 +21,40 @@ export async function parsePDFToText(buffer: Buffer): Promise<string> {
     // Dynamic import for pdf-parse (configured as external package in next.config.ts)
     const pdfModule: any = await import('pdf-parse');
 
-    // The ESM version exports a PDFParse class
-    const { PDFParse } = pdfModule;
+    // Debug: Log module structure
+    console.log('[PDF Parser] Module keys:', Object.keys(pdfModule));
+    console.log('[PDF Parser] Has default?', 'default' in pdfModule);
+    console.log('[PDF Parser] Default type:', typeof pdfModule.default);
+    console.log('[PDF Parser] Module type:', typeof pdfModule);
 
-    if (!PDFParse) {
-      throw new Error('PDFParse class not found in pdf-parse module');
+    // Handle different export patterns (CJS default vs named exports)
+    let pdfParse: any;
+    if (typeof pdfModule.default === 'function') {
+      pdfParse = pdfModule.default;
+      console.log('[PDF Parser] Using default export');
+    } else if (typeof pdfModule === 'function') {
+      pdfParse = pdfModule;
+      console.log('[PDF Parser] Using module as function');
+    } else if (pdfModule.PDFParser && typeof pdfModule.PDFParser === 'function') {
+      pdfParse = pdfModule.PDFParser;
+      console.log('[PDF Parser] Using PDFParser export');
+    } else {
+      // Last resort: try to find any function in the module
+      const keys = Object.keys(pdfModule);
+      const funcKey = keys.find(key => typeof pdfModule[key] === 'function');
+      if (funcKey) {
+        pdfParse = pdfModule[funcKey];
+        console.log('[PDF Parser] Using found function:', funcKey);
+      } else {
+        console.error('[PDF Parser] Module structure:', pdfModule);
+        throw new Error('Could not find pdf-parse function in module');
+      }
     }
 
-    // Create parser instance with buffer data
-    const parser = new PDFParse({
-      data: buffer,
-      disableWorker: true,
-    });
+    // Parse the PDF buffer
+    const data = await pdfParse(buffer);
 
-    // Extract text from PDF
-    const result = await parser.getText();
-
-    return result.text.trim();
+    return data.text.trim();
   } catch (error) {
     console.error('Error parsing PDF:', error);
     throw new Error('Failed to parse resume PDF');
@@ -181,7 +198,7 @@ export function extractSections(text: string): ParsedResumeSections {
 export function extractBullets(sections: ParsedResumeSections): ResumeBullet[] {
   const bullets: ResumeBullet[] = [];
 
-  sections.experience.forEach((exp, expIndex) => {
+  sections.experience.forEach((exp: ResumeExperienceItem, expIndex) => {
     exp.bullets.forEach((bullet, bulletIndex) => {
       bullets.push({
         text: bullet,
