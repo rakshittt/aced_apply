@@ -192,11 +192,11 @@ export interface ResultsResponse {
   };
 }
 
-export interface PrepDayWithDetails extends PrepDay {
+export interface PrepDayWithDetails extends Omit<PrepDay, 'rubric'> {
   rubric: Rubric;
 }
 
-export interface CoachResponse extends CoachCard {}
+export interface CoachResponse extends CoachCard { }
 
 // ============================================================================
 // Internal Service Types

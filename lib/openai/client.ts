@@ -7,8 +7,15 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import { zodResponseFormat } from 'openai/helpers/zod';
 
+// Validate API key exists
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error(
+    'OPENAI_API_KEY environment variable is not set. Please add it to your .env file.'
+  );
+}
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-2024-08-06';
@@ -56,7 +63,7 @@ export async function generateStructuredOutput<T>(
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(prompt, context);
 
-    const completion = await openai.beta.chat.completions.parse({
+    const completion = await openai.chat.completions.create({
       model,
       temperature,
       messages: [
@@ -67,17 +74,27 @@ export async function generateStructuredOutput<T>(
     });
 
     const choice = completion.choices[0];
-    const data = choice.message.parsed;
+    const messageContent = choice.message?.content;
 
-    if (!data) {
-      throw new Error('No parsed data returned from OpenAI');
+    if (!messageContent) {
+      throw new Error('No content returned from OpenAI');
+    }
+
+    // Parse the JSON response and validate with Zod
+    let data: T;
+    try {
+      const jsonData = JSON.parse(messageContent);
+      data = schema.parse(jsonData);
+    } catch (parseError) {
+      console.error('Failed to parse OpenAI response:', messageContent);
+      throw new Error(`Invalid response format: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
     }
 
     // Log model version for audit trail
     await logModelUsage(model, completion.usage);
 
     return {
-      data: data as T,
+      data,
       model: completion.model,
       usage: {
         promptTokens: completion.usage?.prompt_tokens || 0,
@@ -88,7 +105,15 @@ export async function generateStructuredOutput<T>(
     };
   } catch (error) {
     console.error('OpenAI API error:', error);
-    throw new Error('Failed to generate structured output from OpenAI');
+    // Log more details about the error
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    // Preserve the original error for debugging
+    throw new Error(
+      `Failed to generate structured output from OpenAI: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 }
 

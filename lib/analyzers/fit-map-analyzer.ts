@@ -100,9 +100,9 @@ export async function analyzeFitMap(
       jobRunId: runId,
       overallFit: finalFit.level,
       confidence: finalFit.confidence,
-      overlap: finalOverlaps,
-      underEvidenced: finalUnderEvidenced,
-      gaps: finalGaps,
+      overlap: finalOverlaps as any,
+      underEvidenced: finalUnderEvidenced as any,
+      gaps: finalGaps as any,
     },
   });
 

@@ -5,19 +5,33 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getAuthenticatedUser, verifyOwnership, AuthorizationError } from '@/lib/auth/helpers';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
   try {
+    // Authenticate user
+    const user = await getAuthenticatedUser();
     const { runId } = await params;
+
+    // Verify ownership
+    const isOwner = await verifyOwnership(user.id, runId);
+    if (!isOwner) {
+      throw new AuthorizationError('You do not have permission to access this analysis', 403);
+    }
 
     // Fetch job run with all relations
     const jobRun = await prisma.jobRun.findUnique({
       where: { id: runId },
       include: {
-        jd: true,
+        jd: {
+          include: {
+            companyResearch: true,
+            recruiterPriority: true,
+          },
+        },
         resume: true,
         fitMap: true,
         changeAdvisor: {
@@ -36,7 +50,7 @@ export async function GET(
           },
         },
       },
-    });
+    } as const);
 
     if (!jobRun) {
       return NextResponse.json(
@@ -121,11 +135,49 @@ export async function GET(
             })),
           }
         : null,
+
+      companyResearch: jobRun.jd.companyResearch
+        ? {
+            companyName: jobRun.jd.companyResearch.companyName,
+            companySize: jobRun.jd.companyResearch.companySize,
+            industry: jobRun.jd.companyResearch.industry,
+            techStack: jobRun.jd.companyResearch.techStack,
+            cultureSignals: jobRun.jd.companyResearch.cultureSignals,
+            seniority: jobRun.jd.companyResearch.seniority,
+            reasoning: jobRun.jd.companyResearch.reasoning,
+          }
+        : null,
+
+      recruiterPriority: jobRun.jd.recruiterPriority
+        ? {
+            requirements: jobRun.jd.recruiterPriority.requirements,
+            mustHaveKeywords: jobRun.jd.recruiterPriority.mustHaveKeywords,
+            niceToHaveKeywords: jobRun.jd.recruiterPriority.niceToHaveKeywords,
+            overallStrategy: jobRun.jd.recruiterPriority.overallStrategy,
+          }
+        : null,
     };
 
     return NextResponse.json(response);
   } catch (error) {
     console.error('[Results] Error:', error);
+
+    // Handle authentication errors
+    if (error instanceof Error && error.message.includes('Unauthorized')) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 401 }
+      );
+    }
+
+    // Handle authorization errors
+    if (error instanceof AuthorizationError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Failed to fetch results' },
       { status: 500 }
@@ -142,7 +194,15 @@ export async function DELETE(
   { params }: { params: Promise<{ runId: string }> }
 ) {
   try {
+    // Authenticate user
+    const user = await getAuthenticatedUser();
     const { runId } = await params;
+
+    // Verify ownership
+    const isOwner = await verifyOwnership(user.id, runId);
+    if (!isOwner) {
+      throw new AuthorizationError('You do not have permission to delete this analysis', 403);
+    }
 
     // Delete job run (CASCADE will delete all related data)
     await prisma.jobRun.delete({
@@ -155,6 +215,23 @@ export async function DELETE(
     });
   } catch (error) {
     console.error('[Results] Delete error:', error);
+
+    // Handle authentication errors
+    if (error instanceof Error && error.message.includes('Unauthorized')) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 401 }
+      );
+    }
+
+    // Handle authorization errors
+    if (error instanceof AuthorizationError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Failed to delete data' },
       { status: 500 }

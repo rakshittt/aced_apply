@@ -37,7 +37,7 @@ export const {
         const password = credentials.password as string;
 
         // Find user by email
-        const user = await prisma.user.findUnique({
+        const user = await (prisma as any).user.findUnique({
           where: { email },
         });
 
@@ -160,7 +160,7 @@ export const {
       console.log(`New user created: ${user.email}`);
 
       // Initialize user with FREE plan
-      await prisma.user.update({
+      await (prisma as any).user.update({
         where: { id: user.id },
         data: {
           plan: 'FREE',

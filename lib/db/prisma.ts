@@ -1,9 +1,10 @@
 /**
  * Prisma Client Singleton
  * Prevents multiple instances in development with hot reload
+ *
+ * Import from the generated client to ensure model types are available.
  */
-
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '.prisma/client';
 
 const prismaClientSingleton = () => {
   return new PrismaClient({

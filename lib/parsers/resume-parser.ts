@@ -14,47 +14,44 @@ import type {
 
 /**
  * Parse PDF buffer to extract text
- * Using pdf-parse which works in Node.js/serverless when externalized
+ * Uses pdf-parse in either its ESM class API (PDFParse) or legacy default export.
  */
 export async function parsePDFToText(buffer: Buffer): Promise<string> {
   try {
-    // Dynamic import for pdf-parse (configured as external package in next.config.ts)
-    const pdfModule: any = await import('pdf-parse');
+    // Import pdfjs-dist to configure worker options
+    const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
-    // Debug: Log module structure
-    console.log('[PDF Parser] Module keys:', Object.keys(pdfModule));
-    console.log('[PDF Parser] Has default?', 'default' in pdfModule);
-    console.log('[PDF Parser] Default type:', typeof pdfModule.default);
-    console.log('[PDF Parser] Module type:', typeof pdfModule);
-
-    // Handle different export patterns (CJS default vs named exports)
-    let pdfParse: any;
-    if (typeof pdfModule.default === 'function') {
-      pdfParse = pdfModule.default;
-      console.log('[PDF Parser] Using default export');
-    } else if (typeof pdfModule === 'function') {
-      pdfParse = pdfModule;
-      console.log('[PDF Parser] Using module as function');
-    } else if (pdfModule.PDFParser && typeof pdfModule.PDFParser === 'function') {
-      pdfParse = pdfModule.PDFParser;
-      console.log('[PDF Parser] Using PDFParser export');
-    } else {
-      // Last resort: try to find any function in the module
-      const keys = Object.keys(pdfModule);
-      const funcKey = keys.find(key => typeof pdfModule[key] === 'function');
-      if (funcKey) {
-        pdfParse = pdfModule[funcKey];
-        console.log('[PDF Parser] Using found function:', funcKey);
-      } else {
-        console.error('[PDF Parser] Module structure:', pdfModule);
-        throw new Error('Could not find pdf-parse function in module');
-      }
+    // Configure PDF.js to use the bundled worker file
+    // This prevents the "No GlobalWorkerOptions.workerSrc" error
+    if (pdfjsLib?.GlobalWorkerOptions) {
+      // In Node.js environment, we can disable the worker or use the legacy build
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
     }
 
-    // Parse the PDF buffer
-    const data = await pdfParse(buffer);
+    const pdfModule: any = await import('pdf-parse');
 
-    return data.text.trim();
+    // Preferred ESM class API
+    const ParserClass = pdfModule?.PDFParse;
+    if (typeof ParserClass === 'function') {
+      const parser = new ParserClass({ data: buffer });
+      const result = await parser.getText();
+      return (result?.text || '').toString().trim();
+    }
+
+    // Legacy default export (CommonJS style)
+    const pdfParseFn =
+      typeof pdfModule?.default === 'function'
+        ? pdfModule.default
+        : typeof pdfModule === 'function'
+          ? pdfModule
+          : undefined;
+
+    if (typeof pdfParseFn === 'function') {
+      const result = await pdfParseFn(buffer);
+      return (result?.text || '').toString().trim();
+    }
+
+    throw new Error('Unsupported pdf-parse export shape');
   } catch (error) {
     console.error('Error parsing PDF:', error);
     throw new Error('Failed to parse resume PDF');
@@ -85,9 +82,9 @@ export function extractSections(text: string): ParsedResumeSections {
   };
 
   let currentSection: string | null = null;
-  let currentExperience: Partial<ResumeExperienceItem> | null = null;
-  let currentEducation: Partial<EducationItem> | null = null;
-  let currentProject: Partial<ProjectItem> | null = null;
+  let currentExperience: ResumeExperienceItem | null = null;
+  let currentEducation: EducationItem | null = null;
+  let currentProject: ProjectItem | null = null;
   let bullets: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -123,8 +120,8 @@ export function extractSections(text: string): ParsedResumeSections {
     if (currentSection === 'experience') {
       // Check if line looks like a job title (usually bold or capitalized)
       if (isLikelyJobTitle(line) && !currentExperience) {
-        if (currentExperience && bullets.length > 0) {
-          currentExperience.bullets = [...bullets];
+        if ((currentExperience) && bullets.length > 0) {
+          (currentExperience as ResumeExperienceItem).bullets = [...bullets];
           sections.experience.push(currentExperience as ResumeExperienceItem);
           bullets = [];
         }

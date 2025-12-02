@@ -16,19 +16,27 @@ export interface InterviewerLensResult {
   behaviorCues: any[];
 }
 
+export interface CompanyContext {
+  companySize: string;
+  industry: string;
+  seniority: string;
+  cultureSignals: Array<{ signal: string; evidence: string[] }>;
+}
+
 /**
  * Analyze what interviewers will measure and company behavior
  */
 export async function analyzeInterviewerLens(
   runId: string,
-  jd: ParsedJD
+  jd: ParsedJD,
+  companyContext?: CompanyContext
 ): Promise<InterviewerLensResult> {
   const startTime = Date.now();
 
   console.log('[InterviewerLens] Analyzing interview expectations...');
 
   const response = await generateStructuredOutput<InterviewerLensResponse>({
-    prompt: buildInterviewerLensPrompt(jd),
+    prompt: buildInterviewerLensPrompt(jd, companyContext),
     schema: InterviewerLensResponseSchema,
     schemaName: 'InterviewerLensResponse',
     context: {
@@ -61,11 +69,36 @@ export async function analyzeInterviewerLens(
 /**
  * Build prompt for Interviewer Lens
  */
-function buildInterviewerLensPrompt(jd: ParsedJD): string {
+function buildInterviewerLensPrompt(jd: ParsedJD, companyContext?: CompanyContext): string {
+  const companyContextSection = companyContext ? `
+## COMPANY CONTEXT
+Use this context to tailor your analysis to the specific company characteristics:
+- **Company Size**: ${companyContext.companySize}
+- **Industry**: ${companyContext.industry}
+- **Expected Seniority**: ${companyContext.seniority}
+- **Culture Signals**: ${companyContext.cultureSignals.map(c => c.signal).join(', ')}
+
+**Tailor your analysis based on company type:**
+- **STARTUP**: Expect scrappiness, wearing multiple hats, rapid iteration, less formal process
+- **SCALEUP**: Balance between speed and process, growing pains, scaling challenges
+- **ENTERPRISE**: Emphasis on process, scale, compliance, cross-team collaboration
+
+**Tailor competencies based on seniority:**
+- **JUNIOR/MID**: Focus on execution, technical skills, learning ability
+- **SENIOR**: Add architectural thinking, code quality, mentorship signals
+- **STAFF/PRINCIPAL**: Strategic thinking, influence without authority, technical direction
+
+**Industry-specific considerations:**
+- **Fintech/Healthcare**: Security-mindedness, compliance awareness, data sensitivity
+- **B2B SaaS**: Customer empathy, reliability, enterprise-grade thinking
+- **Consumer Tech**: Scale considerations, user experience, analytics-driven
+
+` : '';
+
   return `You are analyzing what interviewers will measure for this role, based ONLY on the job description.
 
 CRITICAL: All analysis must be derived from the JD text. Do NOT make assumptions based on general industry knowledge.
-
+${companyContextSection}
 TASK 1: COMPETENCIES (4-6 items)
 Identify what interviewers will evaluate. For each competency:
 - Name: e.g., "System Design", "Coding Skills", "Technical Communication"
