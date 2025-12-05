@@ -44,8 +44,16 @@ export const FitMapEnhancementSchema = z.object({
   additionalOverlaps: z.array(OverlapItemSchema),
   additionalGaps: z.array(GapItemSchema),
   underEvidenced: z.array(UnderEvidencedItemSchema),
+  semanticMatches: z.array(z.object({
+    skill: z.string(),
+    impliedBy: z.string(),
+    confidence: z.number()
+  })).nullable().optional(),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
+  hiringManagerMemo: z.string().nullable().optional(), // New field: Internal rejection narrative
+  levelAssessment: z.enum(['MATCH', 'UNDER_LEVEL', 'OVER_LEVEL', 'UNKNOWN']).nullable().optional(), // New field: Seniority check
+  dealBreakers: z.array(z.string()).nullable().optional(), // New field: Knock-out criteria missing
 });
 
 // ============================================================================
@@ -75,6 +83,7 @@ export const ATSWarningSchema = z.object({
 export const ChangeAdvisorResponseSchema = z.object({
   suggestions: z.array(SuggestionSchema).min(6), // PRD requires ≥6
   atsWarnings: z.array(ATSWarningSchema),
+  fluffWords: z.array(z.string()).nullable().optional(), // New field: BS Detector results
 });
 
 // ============================================================================
@@ -103,6 +112,7 @@ export const InterviewerLensResponseSchema = z.object({
   competencies: z.array(CompetencySchema).min(4), // PRD requires ≥4
   likelyFormats: z.array(InterviewFormatSchema).min(2), // PRD requires ≥2
   behaviorCues: z.array(BehaviorCueSchema).min(2), // PRD requires ≥2
+  situationalQuestions: z.array(z.string()).min(2).nullable().optional(), // New field
 });
 
 // ============================================================================
@@ -140,6 +150,8 @@ export const WhatTheyMeasureSchema = z.object({
   whyItMatters: z.string(), // Why this matters for THIS role
   yourGaps: z.array(z.string()), // Specific gaps from user's Fit Map
   howToPrepare: z.string(), // Actionable preparation advice
+  failureModes: z.array(z.string()), // Common pitfalls/mistakes
+  followUpQuestions: z.array(z.string()), // Likely follow-up questions
 });
 
 export const RecruiterInsightSchema = z.object({

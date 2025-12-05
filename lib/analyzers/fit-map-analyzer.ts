@@ -136,14 +136,21 @@ Our deterministic analysis found:
 
 Your task is to enhance this analysis by finding:
 1. Additional skill overlaps that our keyword matching may have missed (e.g., "backend development" matches "server-side programming")
-2. Additional gaps where the JD requires skills not clearly demonstrated in the resume
-3. Skills that are mentioned in the resume but lack concrete evidence (metrics, specific projects, etc.)
+2. **Semantic Matches**: Skills implied by other skills (e.g., "React" implies "JavaScript", "Spring Boot" implies "Java"). List these explicitly.
+3. Additional gaps where the JD requires skills not clearly demonstrated in the resume
+4. Skills that are mentioned in the resume but lack concrete evidence (metrics, specific projects, etc.)
 
 CRITICAL REQUIREMENTS:
 - Only add items with clear evidence - cite specific text spans from both JD and resume
 - Be conservative with confidence scores - only use high confidence when evidence is unambiguous
 - Focus on substantive skills and qualifications, not superficial keyword matches
 - For gaps, consider whether alternative experience might fill the requirement
+- For semantic matches, explicitly state what skill implies the match
+
+Additionally, provide the following assessments:
+7. "hiringManagerMemo": Write a brutal, honest internal memo from the hiring manager to the recruiter. Explain why they should or should not interview this candidate. Be specific about doubts.
+8. "levelAssessment": Determine if the candidate is "MATCH", "UNDER_LEVEL", or "OVER_LEVEL" based on years of experience and scope of past roles vs the JD requirements.
+9. "dealBreakers": Identify any specific "knock-out" criteria in the JD that the candidate explicitly fails (e.g., "Must have TS/SCI clearance", "Must be located in SF", "Must have PhD"). If none, return empty array.
 
 Return structured JSON with your enhancements.`;
 }

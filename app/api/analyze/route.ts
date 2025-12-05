@@ -1,6 +1,6 @@
 /**
  * POST /api/analyze
- * Main analysis endpoint - orchestrates all analyzers
+ * Main analysis endpoint - orchestrates all analyzers with Streaming Response
  * Target: TTFI ≤ 60s, Full run ≤ 180s
  */
 
@@ -22,296 +22,253 @@ import {
   UsageLimitError,
 } from '@/lib/auth/helpers';
 
+// Helper to send SSE events
+const sendEvent = (controller: ReadableStreamDefaultController, event: string, data: any) => {
+  const encoder = new TextEncoder();
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  controller.enqueue(encoder.encode(payload));
+};
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const db = prisma as GeneratedPrismaClient;
 
+  // Authenticate user first (blocking)
+  let user;
   try {
-    // Authenticate user
-    const user = await getAuthenticatedUser();
-
-    // Check usage limits
+    user = await getAuthenticatedUser();
     const usageCheck = await checkUsageLimit(user.id);
     if (!usageCheck.allowed) {
       throw new UsageLimitError(
-        `You have reached your monthly limit of ${usageCheck.limit} analyses. Please upgrade your plan to continue.`,
+        `You have reached your monthly limit of ${usageCheck.limit} analyses.`,
         usageCheck.limit,
         usageCheck.plan
       );
     }
-
-    const body = await request.json();
-    const { jdUrl, jdText, resumeId: providedResumeId } = body;
-
-    if (!jdUrl && !jdText) {
-      return NextResponse.json(
-        { error: 'Either jdUrl or jdText is required' },
-        { status: 400 }
-      );
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Unauthorized')) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
     }
+    if (error instanceof UsageLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
+    return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
+  }
 
-    // Step 1: Parse JD
-    console.log('[Analyze] Parsing job description...');
-    const parsedJD = await parseJobDescription({ url: jdUrl, text: jdText });
+  // Parse body (blocking)
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
 
-    // Save JD to database
-    const jd = await db.jobDescription.create({
-      data: {
-        rawText: parsedJD.rawText,
+  const { jdUrl, jdText, resumeId: providedResumeId } = body;
+
+  if (!jdUrl && !jdText) {
+    return NextResponse.json({ error: 'Either jdUrl or jdText is required' }, { status: 400 });
+  }
+
+  // Create a TransformStream for the response
+  const stream = new TransformStream();
+  const writer = stream.writable.getWriter();
+  const encoder = new TextEncoder();
+
+  // Start processing in background
+  (async () => {
+    // Helper to write to stream
+    const write = (event: string, data: any) => {
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      writer.write(encoder.encode(payload));
+    };
+
+    try {
+
+      write('START', { message: 'Starting analysis...' });
+
+      // Step 1: Parse JD
+      write('LOG', { message: 'Parsing job description...' });
+      const parsedJD = await parseJobDescription({ url: jdUrl, text: jdText });
+
+      write('JD_PARSED', {
         title: parsedJD.title,
         company: parsedJD.company,
-        location: parsedJD.location,
-        requirements: parsedJD.requirements,
-        responsibilities: parsedJD.responsibilities,
-        qualifications: parsedJD.qualifications,
-        keywords: parsedJD.keywords,
-        behaviorCues: parsedJD.behaviorCues as any,
-      },
-    });
+        requirementsCount: parsedJD.requirements.length
+      });
 
-    // Step 1.5: Analyze company research (runs in parallel with resume fetch)
-    console.log('[Analyze] Analyzing company context & recruiter priorities...');
-    const companyResearchPromise = analyzeCompanyResearch({ jdText: parsedJD.rawText });
-
-    // Step 2: Get resume - either provided ID or user's default resume
-    let resume;
-    if (providedResumeId) {
-      // Verify ownership if resumeId provided
-      resume = await db.resume.findFirst({
-        where: {
-          id: providedResumeId,
-          userId: user.id, // Ownership verification
+      // Save JD to database
+      const jd = await db.jobDescription.create({
+        data: {
+          rawText: parsedJD.rawText,
+          title: parsedJD.title,
+          company: parsedJD.company,
+          location: parsedJD.location,
+          requirements: parsedJD.requirements,
+          responsibilities: parsedJD.responsibilities,
+          qualifications: parsedJD.qualifications,
+          keywords: parsedJD.keywords,
+          behaviorCues: parsedJD.behaviorCues as any,
         },
       });
 
-      if (!resume) {
-        return NextResponse.json(
-          { error: 'Resume not found or access denied' },
-          { status: 404 }
-        );
+      // Step 1.5: Analyze company research (parallel start)
+      write('LOG', { message: 'Researching company context...' });
+      const companyResearchPromise = analyzeCompanyResearch({ jdText: parsedJD.rawText });
+
+      // Step 2: Get resume
+      write('LOG', { message: 'Fetching resume...' });
+      let resume;
+      if (providedResumeId) {
+        resume = await db.resume.findFirst({
+          where: { id: providedResumeId, userId: user.id },
+        });
+      } else {
+        resume = await db.resume.findFirst({
+          where: { userId: user.id, isDefault: true },
+        });
       }
-      console.log('[Analyze] Using provided resume:', providedResumeId);
-    } else {
-      // Use user's default resume
-      resume = await db.resume.findFirst({
-        where: {
+
+      if (!resume) {
+        write('ERROR', { message: 'Resume not found' });
+        await writer.close();
+        return;
+      }
+
+      // Create job run
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 30);
+
+      const jobRun = await db.jobRun.create({
+        data: {
           userId: user.id,
-          isDefault: true,
+          jdId: jd.id,
+          resumeId: resume.id,
+          jdUrl: jdUrl || null,
+          jdText: parsedJD.rawText,
+          resumeS3Key: resume.s3Key,
+          resumeText: resume.rawText,
+          expiresAt,
+          status: 'PROCESSING',
         },
       });
 
-      if (!resume) {
-        return NextResponse.json(
-          { error: 'No default resume found. Please upload a resume first.' },
-          { status: 400 }
-        );
-      }
-      console.log('[Analyze] Using default resume:', resume.id);
-    }
+      write('RUN_CREATED', { runId: jobRun.id });
 
-    // Create job run
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30-day retention
+      // Await company research
+      const companyResearchResult = await companyResearchPromise;
+      const companyInfo = companyResearchResult.companyInfo;
+      const recruiterPriorities = companyResearchResult.recruiterPriorities;
 
-    const jobRun = await db.jobRun.create({
-      data: {
-        userId: user.id,
-        jdId: jd.id,
-        resumeId: resume.id,
-        jdUrl: jdUrl || null,
-        jdText: parsedJD.rawText,
-        resumeS3Key: resume.s3Key,
-        resumeText: resume.rawText,
-        expiresAt,
-        status: 'PROCESSING',
-      },
-    });
+      // Save company research
+      await Promise.all([
+        db.companyResearch.create({
+          data: {
+            jdId: jd.id,
+            companyName: companyInfo.companyName ?? null,
+            companySize: companyInfo.companySize ?? 'UNKNOWN',
+            industry: companyInfo.industry ?? 'Unknown',
+            techStack: companyInfo.techStack ?? [],
+            cultureSignals: (companyInfo.cultureSignals as any) ?? [],
+            seniority: companyInfo.seniority ?? 'UNKNOWN',
+            reasoning: companyInfo.reasoning ?? 'No reasoning provided',
+          },
+        }),
+        db.recruiterPriority.create({
+          data: {
+            jdId: jd.id,
+            requirements: (recruiterPriorities.requirements as any) ?? [],
+            mustHaveKeywords: recruiterPriorities.mustHaveKeywords ?? [],
+            niceToHaveKeywords: recruiterPriorities.niceToHaveKeywords ?? [],
+            overallStrategy: recruiterPriorities.overallStrategy ?? 'No strategy extracted',
+          },
+        }),
+      ]);
 
-    // Await company research and store results
-    const companyResearchResult = await companyResearchPromise;
+      write('COMPANY_RESEARCHED', {
+        company: companyInfo.companyName,
+        industry: companyInfo.industry
+      });
 
-    const companyInfo = companyResearchResult.companyInfo;
-    const recruiterPriorities = companyResearchResult.recruiterPriorities;
+      // Step 2: Run analyzers
+      write('LOG', { message: 'Analyzing fit...' });
 
-    await Promise.all([
-      db.companyResearch.create({
-        data: {
-          jdId: jd.id,
-          companyName: companyInfo.companyName ?? null,
-          companySize: companyInfo.companySize ?? 'UNKNOWN',
-          industry: companyInfo.industry ?? 'Unknown',
-          techStack: companyInfo.techStack ?? [],
-          cultureSignals: (companyInfo.cultureSignals as any) ?? [],
-          seniority: companyInfo.seniority ?? 'UNKNOWN',
-          reasoning: companyInfo.reasoning ?? 'No reasoning provided',
-        },
-      }),
-      db.recruiterPriority.create({
-        data: {
-          jdId: jd.id,
-          requirements: (recruiterPriorities.requirements as any) ?? [],
-          mustHaveKeywords: recruiterPriorities.mustHaveKeywords ?? [],
-          niceToHaveKeywords: recruiterPriorities.niceToHaveKeywords ?? [],
-          overallStrategy: recruiterPriorities.overallStrategy ?? 'No strategy extracted',
-        },
-      }),
-    ]);
+      const resumeData = {
+        rawText: resume.rawText,
+        sections: resume.sections as any,
+        bullets: resume.bullets as any,
+      };
 
-    console.log('[Analyze] Company research complete');
+      // Priority 1: Fit Map
+      const fitMapResult = await analyzeFitMap(jobRun.id, parsedJD, resumeData);
+      const ttfi = Date.now() - startTime;
 
-    // Step 2: Run analyzers in parallel (for TTFI optimization)
-    console.log('[Analyze] Running parallel analysis...');
+      write('FIT_ANALYZED', {
+        score: fitMapResult.overallFit,
+        confidence: fitMapResult.confidence,
+        ttfi
+      });
 
-    // Prepare resume data
-    const resumeData = {
-      rawText: resume.rawText,
-      sections: resume.sections as any,
-      bullets: resume.bullets as any,
-    };
+      // Priority 2: Change Advisor & Interviewer Lens
+      write('LOG', { message: 'Generating suggestions & interview prep...' });
 
-    // Priority 1: Fit Map (needed for TTFI)
-    const fitMapPromise = analyzeFitMap(jobRun.id, parsedJD, resumeData);
+      const [changeAdvisorResult, lensResult] = await Promise.allSettled([
+        analyzeChangeAdvisor(jobRun.id, parsedJD, resumeData, fitMapResult.gaps),
+        analyzeInterviewerLens(jobRun.id, parsedJD, {
+          companySize: companyResearchResult.companyInfo.companySize,
+          industry: companyResearchResult.companyInfo.industry,
+          seniority: companyResearchResult.companyInfo.seniority,
+          cultureSignals: companyResearchResult.companyInfo.cultureSignals,
+        }),
+      ]);
 
-    // Priority 2: Change Advisor & Interviewer Lens (parallel)
-    const fitMapResult = await fitMapPromise;
-    const ttfi = Date.now() - startTime;
-
-    console.log(`[Analyze] TTFI: ${ttfi}ms (target: ≤60000ms)`);
-
-    // Continue with remaining analyzers
-    console.log('[Analyze] Running Change Advisor and Interview Lens in parallel...');
-    const [changeAdvisorResult, lensResult] = await Promise.allSettled([
-      analyzeChangeAdvisor(jobRun.id, parsedJD, resumeData, fitMapResult.gaps),
-      analyzeInterviewerLens(jobRun.id, parsedJD, {
-        companySize: companyResearchResult.companyInfo.companySize,
-        industry: companyResearchResult.companyInfo.industry,
-        seniority: companyResearchResult.companyInfo.seniority,
-        cultureSignals: companyResearchResult.companyInfo.cultureSignals,
-      }),
-    ]);
-
-    // Check Change Advisor result
-    if (changeAdvisorResult.status === 'rejected') {
-      console.error('[Analyze] Change Advisor failed:', changeAdvisorResult.reason);
-    } else {
-      console.log('[Analyze] Change Advisor completed successfully');
-    }
-
-    // Check Interview Lens result
-    if (lensResult.status === 'rejected') {
-      console.error('[Analyze] Interview Lens failed:', lensResult.reason);
-    } else {
-      console.log('[Analyze] Interview Lens completed successfully');
-    }
-
-    // Priority 3: Prep Kit (depends on fit map & lens)
-    console.log('[Analyze] Running Prep Kit...');
-    let prepKitResult;
-    let prepKitSuccess = false;
-    try {
-      // Use behavior cues from lens if available, otherwise use empty array as fallback
-      const behaviorCues = lensResult.status === 'fulfilled'
-        ? lensResult.value.behaviorCues
-        : [];
-
-      if (lensResult.status === 'rejected') {
-        console.warn('[Analyze] Running Prep Kit with empty behavior cues (lens failed)');
+      if (changeAdvisorResult.status === 'fulfilled') {
+        write('ADVISOR_READY', { count: changeAdvisorResult.value.suggestions.length });
       }
 
-      prepKitResult = await generatePrepKit(
-        jobRun.id,
-        parsedJD,
-        fitMapResult.gaps,
-        behaviorCues
-      );
-      prepKitSuccess = true;
-      console.log('[Analyze] Prep Kit completed successfully');
+      // Priority 3: Prep Kit
+      let behaviorCues = [];
+      if (lensResult.status === 'fulfilled') {
+        behaviorCues = lensResult.value.behaviorCues;
+        write('LENS_READY', { competencies: lensResult.value.competencies.length });
+      }
+
+      write('LOG', { message: 'Creating 7-Day Prep Kit...' });
+      await generatePrepKit(jobRun.id, parsedJD, fitMapResult.gaps, behaviorCues);
+
+      write('PREP_READY', { days: 7 });
+
+      // Finalize
+      const totalDuration = Date.now() - startTime;
+      await db.jobRun.update({
+        where: { id: jobRun.id },
+        data: {
+          status: 'COMPLETED',
+          ttfi,
+          totalDuration,
+        },
+      });
+
+      await incrementUsageCount(user.id);
+
+      write('COMPLETE', {
+        runId: jobRun.id,
+        duration: totalDuration
+      });
+
     } catch (error) {
-      console.error('[Analyze] Prep Kit failed:', error);
-      prepKitSuccess = false;
+      console.error('[Analyze Stream] Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      write('ERROR', { message: errorMessage });
+    } finally {
+      await writer.close();
     }
+  })();
 
-    // Track which analyzers succeeded
-    const analyzersCompleted = {
-      fitMap: true, // Always succeeds or throws (handled by outer try/catch)
-      companyResearch: true, // Already awaited earlier
-      changeAdvisor: changeAdvisorResult.status === 'fulfilled',
-      interviewerLens: lensResult.status === 'fulfilled',
-      prepKit: prepKitSuccess,
-    };
-
-    const allSucceeded = Object.values(analyzersCompleted).every(v => v === true);
-    const finalStatus = allSucceeded ? 'COMPLETED' : 'COMPLETED'; // Keep as COMPLETED for now, but we know which failed
-
-    // Log completion summary
-    console.log('[Analyze] Completion Summary:', {
-      status: finalStatus,
-      analyzers: analyzersCompleted,
-      allSucceeded,
-    });
-
-    // Update job run with completion status
-    const totalDuration = Date.now() - startTime;
-    await db.jobRun.update({
-      where: { id: jobRun.id },
-      data: {
-        status: finalStatus,
-        ttfi,
-        totalDuration,
-      },
-    });
-
-    // Increment user's usage count after successful analysis
-    await incrementUsageCount(user.id);
-
-    console.log(`[Analyze] Full run completed in ${totalDuration}ms (target: ≤180000ms)`);
-
-    return NextResponse.json({
-      success: true,
-      runId: jobRun.id,
-      status: finalStatus,
-      ttfi,
-      totalDuration,
-      analyzers: analyzersCompleted, // Include analyzer status in response
-      metrics: {
-        ttfiTarget: 60000,
-        ttfiActual: ttfi,
-        ttfiMet: ttfi <= 60000,
-        fullRunTarget: 180000,
-        fullRunActual: totalDuration,
-        fullRunMet: totalDuration <= 180000,
-      },
-    });
-  } catch (error) {
-    console.error('[Analyze] Error:', error);
-
-    // Handle authentication errors
-    if (error instanceof Error && error.message.includes('Unauthorized')) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 401 }
-      );
-    }
-
-    // Handle usage limit errors
-    if (error instanceof UsageLimitError) {
-      return NextResponse.json(
-        {
-          error: 'Usage limit reached',
-          message: error.message,
-          limit: error.limit,
-          plan: error.plan,
-        },
-        { status: 429 } // Too Many Requests
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: 'Analysis failed',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
-    );
-  }
+  return new NextResponse(stream.readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 }

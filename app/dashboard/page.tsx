@@ -67,12 +67,6 @@ export default async function DashboardPage() {
             <span className="font-semibold tracking-tight">Dashboard</span>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/settings">
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
-              </Link>
-            </Button>
             <form
               action={async () => {
                 'use server';
@@ -160,29 +154,7 @@ export default async function DashboardPage() {
 
         {/* Quick Actions */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Link href="/history" className="group">
-            <Card className="h-full border-border/50 hover:border-primary/50 transition-all hover:shadow-md cursor-pointer">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <History className="h-5 w-5 text-primary" />
-                  History
-                </CardTitle>
-                <CardDescription>View past analyses</CardDescription>
-              </CardHeader>
-            </Card>
-          </Link>
-
-          <Link href="/coach" className="group">
-            <Card className="h-full border-border/50 hover:border-primary/50 transition-all hover:shadow-md cursor-pointer">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Calendar className="h-5 w-5 text-primary" />
-                  Interview Coach
-                </CardTitle>
-                <CardDescription>Prepare for upcoming interviews</CardDescription>
-              </CardHeader>
-            </Card>
-          </Link>
+          {/* Add future quick actions here */}
         </div>
 
         {/* Recent Analyses */}

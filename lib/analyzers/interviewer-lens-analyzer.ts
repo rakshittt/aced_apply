@@ -117,6 +117,10 @@ Detect company culture signals from JD language. For each cue:
 - JD phrases: Array of exact phrases that imply this (CRITICAL - must cite text!)
 - Implication: What this means for the candidate
 
+TASK 4: SITUATIONAL QUESTIONS (2-3 items)
+Generate specific "Tell me about a time..." questions based on the JD's core requirements.
+- Focus on challenging scenarios relevant to the role (e.g., conflict resolution, technical failure, tight deadlines).
+
 EXAMPLES OF BEHAVIOR CUES:
 - "take ownership", "drive initiatives" → Ownership mindset
 - "regulated industry", "SOX compliance" → Regulated environment

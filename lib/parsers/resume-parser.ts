@@ -66,80 +66,138 @@ export function extractSections(text: string): ParsedResumeSections {
 
   // Common section headers (case-insensitive)
   const sectionHeaders = {
-    experience: /^(work\s+)?experience|employment|professional\s+experience/i,
-    education: /^education|academic/i,
-    skills: /^(technical\s+)?skills|competencies|technologies/i,
-    projects: /^projects|personal\s+projects/i,
-    certifications: /^certifications?|licenses?/i,
+    summary: /^(professional\s+)?summary|profile|objective|about(\s+me)?/i,
+    experience: /^(work\s+)?experience|employment|professional\s+experience|career\s+history/i,
+    education: /^education|academic(\s+background)?/i,
+    skills: /^(technical\s+)?skills|competencies|technologies|core\s+competencies/i,
+    projects: /^projects|personal\s+projects|key\s+projects/i,
+    certifications: /^certifications?|licenses?|awards?|honors?/i,
   };
 
   const sections: ParsedResumeSections = {
+    summary: '',
     experience: [],
     skills: [],
     education: [],
     projects: [],
     certifications: [],
+    custom: [],
   };
 
   let currentSection: string | null = null;
+  let currentCustomTitle: string | null = null;
+
+  // Temp holders
   let currentExperience: ResumeExperienceItem | null = null;
   let currentEducation: EducationItem | null = null;
   let currentProject: ProjectItem | null = null;
   let bullets: string[] = [];
+  let customItems: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // Check if this is a section header
     let foundSection = false;
+
+    // 1. Check standard headers
     for (const [sectionName, pattern] of Object.entries(sectionHeaders)) {
-      if (pattern.test(line)) {
+      if (pattern.test(line) && line.length < 50) { // Headers are usually short
         // Save previous section data
-        if (currentSection === 'experience' && currentExperience) {
-          currentExperience.bullets = [...bullets];
-          sections.experience.push(currentExperience as ResumeExperienceItem);
-          currentExperience = null;
-          bullets = [];
-        } else if (currentSection === 'education' && currentEducation) {
-          sections.education.push(currentEducation as EducationItem);
-          currentEducation = null;
-        } else if (currentSection === 'projects' && currentProject) {
-          sections.projects!.push(currentProject as ProjectItem);
-          currentProject = null;
-        }
+        saveCurrentSection();
 
         currentSection = sectionName;
+        currentCustomTitle = null;
         foundSection = true;
         break;
       }
     }
 
+    // 2. Check for potential custom headers (capitalized, short, not a bullet)
+    if (!foundSection && !currentSection && isLikelyHeader(line)) {
+      // Treat as custom section if we haven't found a standard one yet, or if we are switching context
+      // But be careful not to break inside an existing section unless it's clearly a new header
+      // For now, let's only detect custom headers if they are very distinct
+    }
+
     if (foundSection) continue;
 
+    // Helper to save data before switching
+    function saveCurrentSection() {
+      if (currentSection === 'experience' && currentExperience) {
+        currentExperience.bullets = [...bullets];
+        sections.experience.push(currentExperience as ResumeExperienceItem);
+        currentExperience = null;
+        bullets = [];
+      } else if (currentSection === 'education' && currentEducation) {
+        sections.education.push(currentEducation as EducationItem);
+        currentEducation = null;
+      } else if (currentSection === 'projects' && currentProject) {
+        sections.projects!.push(currentProject as ProjectItem);
+        currentProject = null;
+      } else if (currentSection === 'custom' && currentCustomTitle) {
+        sections.custom!.push({ title: currentCustomTitle, items: [...customItems] });
+        customItems = [];
+        currentCustomTitle = null;
+      }
+    }
+
     // Process content based on current section
-    if (currentSection === 'experience') {
+    if (currentSection === 'summary') {
+      sections.summary += (sections.summary ? '\n' : '') + line;
+    } else if (currentSection === 'experience') {
       // Check if line looks like a job title (usually bold or capitalized)
-      if (isLikelyJobTitle(line) && !currentExperience) {
+      // OR if it contains a date range, which often indicates a header line
+      const hasDate = extractDates(line).length > 0;
+
+      if ((isLikelyJobTitle(line) || (hasDate && line.length < 100)) && !currentExperience) {
         if ((currentExperience) && bullets.length > 0) {
           (currentExperience as ResumeExperienceItem).bullets = [...bullets];
           sections.experience.push(currentExperience as ResumeExperienceItem);
           bullets = [];
         }
 
+        // Try to split by common separators if on one line
+        // e.g. "Senior Engineer | Acme Corp | 2020 - Present"
+        const parts = line.split(/[|•]/).map(p => p.trim());
+
+        let title = line;
+        let company = lines[i + 1] || '';
+        let dateStr = lines.slice(i, i + 3).join(' '); // Search next few lines for dates
+
+        if (parts.length >= 3) {
+          title = parts[0];
+          company = parts[1];
+          dateStr = parts[2]; // Use the part that likely has the date
+        } else if (parts.length === 2) {
+          // Ambiguous: "Title | Company" or "Company | Title" or "Title | Date"
+          if (extractDates(parts[1]).length > 0) {
+            title = parts[0];
+            dateStr = parts[1];
+          } else {
+            title = parts[0];
+            company = parts[1];
+          }
+        }
+
         currentExperience = {
-          title: line,
-          company: lines[i + 1] || '',
+          title: title,
+          company: company,
           location: extractLocation(lines.slice(i, i + 3).join(' ')),
-          startDate: extractDates(lines.slice(i, i + 3).join(' '))[0] || '',
-          endDate: extractDates(lines.slice(i, i + 3).join(' '))[1] || 'Present',
+          startDate: extractDates(dateStr)[0] || '',
+          endDate: extractDates(dateStr)[1] || 'Present',
           bullets: [],
         };
       } else if (isBulletPoint(line)) {
         bullets.push(cleanBullet(line));
+      } else if (currentExperience) {
+        // Append to description if it's not a bullet but part of the job
+        // For simplicity, treat as bullet if it looks like content
+        if (line.length > 5) bullets.push(line);
       }
     } else if (currentSection === 'education') {
       // Simple education parsing
-      if (line.match(/bachelor|master|phd|b\.s\.|m\.s\.|b\.a\.|m\.a\./i)) {
+      if (line.match(/bachelor|master|phd|b\.s\.|m\.s\.|b\.a\.|m\.a\.|diploma|certificate/i)) {
         if (currentEducation) {
           sections.education.push(currentEducation as EducationItem);
         }
@@ -154,7 +212,7 @@ export function extractSections(text: string): ParsedResumeSections {
       // Extract skills (comma or pipe separated)
       const skillsText = line.replace(/^(Technical\s+)?Skills?:?\s*/i, '');
       const extractedSkills = skillsText
-        .split(/[,|;]/)
+        .split(/[,|;•]/)
         .map(s => s.trim())
         .filter(s => s.length > 0 && s.length < 50);
       sections.skills.push(...extractedSkills);
@@ -171,6 +229,8 @@ export function extractSections(text: string): ParsedResumeSections {
       }
     } else if (currentSection === 'certifications') {
       sections.certifications!.push(line);
+    } else if (currentSection === 'custom') {
+      customItems.push(line);
     }
   }
 
@@ -185,8 +245,15 @@ export function extractSections(text: string): ParsedResumeSections {
   if (currentProject) {
     sections.projects!.push(currentProject as ProjectItem);
   }
+  if (currentCustomTitle && customItems.length > 0) {
+    sections.custom!.push({ title: currentCustomTitle, items: customItems });
+  }
 
   return sections;
+}
+
+function isLikelyHeader(line: string): boolean {
+  return line.length < 40 && /^[A-Z][A-Z\s]+$/.test(line) && !isBulletPoint(line);
 }
 
 /**
@@ -234,7 +301,7 @@ function isLikelyJobTitle(line: string): boolean {
   // Job titles are usually short (< 100 chars) and may contain keywords
   if (line.length > 100) return false;
 
-  const jobKeywords = /engineer|developer|manager|analyst|designer|consultant|specialist|lead|senior|junior|intern/i;
+  const jobKeywords = /engineer|developer|manager|analyst|designer|consultant|specialist|lead|senior|junior|intern|vp|director|chief|head|founder|co-founder|architect|administrator|coordinator|associate/i;
   return jobKeywords.test(line);
 }
 
@@ -265,8 +332,8 @@ function extractLocation(text: string): string | undefined {
 }
 
 function extractDates(text: string): [string?, string?] {
-  // Extract date ranges (e.g., "Jan 2020 - Present", "2019 - 2021")
-  const datePattern = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{4})\s*\d{2,4}\s*[-–—]\s*(?:Present|Current|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{4})\s*\d{0,4}/i;
+  // Extract date ranges (e.g., "Jan 2020 - Present", "2019 - 2021", "01/2020 - 02/2022")
+  const datePattern = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{1,2}\/\d{2,4}|\d{4})\s*[-–—]\s*(?:Present|Current|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{1,2}\/\d{2,4}|\d{4})/i;
   const match = text.match(datePattern);
 
   if (match) {
@@ -289,7 +356,8 @@ function extractGPA(text: string): string | undefined {
 
 function isLikelyProjectName(line: string): boolean {
   // Project names are usually short and may be in title case
-  return line.length < 80 && line.length > 3 && !isBulletPoint(line);
+  // Relaxed check: allow slightly longer lines, but ensure it's not a bullet
+  return line.length < 100 && line.length > 3 && !isBulletPoint(line) && !line.includes('http');
 }
 
 function extractTechnologies(text: string): string[] {

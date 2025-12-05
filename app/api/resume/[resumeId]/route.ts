@@ -1,27 +1,30 @@
 /**
- * PATCH /api/resume/[resumeId]
- * Set a resume as the user's default resume
- *
- * DELETE /api/resume/[resumeId]
- * Delete a resume (with ownership verification)
+ * /api/resume/[resumeId]
+ * Get, Update, or Delete a specific resume
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getAuthenticatedUser } from '@/lib/auth/helpers';
-import { deleteFile } from '@/lib/s3';
+import { sectionsToText } from '@/lib/utils/resume-formatter';
+import { extractBullets } from '@/lib/parsers/resume-parser';
+import { ParsedResumeSections } from '@/types';
 
-export async function PATCH(
+interface RouteParams {
+  params: Promise<{
+    resumeId: string;
+  }>;
+}
+
+export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ resumeId: string }> }
+  { params }: RouteParams
 ) {
   try {
-    // Authenticate user
-    const user = await getAuthenticatedUser();
     const { resumeId } = await params;
+    const user = await getAuthenticatedUser();
 
-    // Verify ownership
-    const resume = await prisma.resume.findFirst({
+    const resume = await prisma.resume.findUnique({
       where: {
         id: resumeId,
         userId: user.id,
@@ -29,123 +32,109 @@ export async function PATCH(
     });
 
     if (!resume) {
-      return NextResponse.json(
-        { error: 'Resume not found or access denied' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Resume not found' }, { status: 404 });
     }
 
-    // Set this resume as default using transaction
-    await prisma.$transaction(async (tx) => {
-      // Unset all other default resumes for this user
-      await tx.resume.updateMany({
-        where: {
-          userId: user.id,
-          isDefault: true,
-        },
-        data: {
-          isDefault: false,
-        },
-      });
-
-      // Set this resume as default
-      await tx.resume.update({
-        where: { id: resumeId },
-        data: { isDefault: true },
-      });
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: 'Resume set as default',
-      resumeId,
-    });
+    return NextResponse.json(resume);
   } catch (error) {
-    console.error('[Resume] PATCH error:', error);
-
-    // Handle authentication errors
+    console.error('[Resume] Error:', error);
     if (error instanceof Error && error.message.includes('Unauthorized')) {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
+    return NextResponse.json({ error: 'Failed to fetch resume' }, { status: 500 });
+  }
+}
 
-    return NextResponse.json(
-      { error: 'Failed to update resume' },
-      { status: 500 }
-    );
+export async function PATCH(
+  request: NextRequest,
+  { params }: RouteParams
+) {
+  try {
+    const { resumeId } = await params;
+    const user = await getAuthenticatedUser();
+    const body = await request.json();
+    const { sections, name } = body;
+
+    // Verify ownership
+    const existingResume = await prisma.resume.findUnique({
+      where: {
+        id: resumeId,
+        userId: user.id,
+      },
+    });
+
+    if (!existingResume) {
+      return NextResponse.json({ error: 'Resume not found' }, { status: 404 });
+    }
+
+    const updateData: any = {};
+
+    if (name) {
+      updateData.name = name;
+    }
+
+    if (sections) {
+      // 1. Update sections JSON
+      updateData.sections = sections;
+
+      // 2. Regenerate raw text
+      const rawText = sectionsToText(sections as ParsedResumeSections);
+      updateData.rawText = rawText;
+
+      // 3. Regenerate bullets
+      const bullets = extractBullets(sections as ParsedResumeSections);
+      updateData.bullets = bullets as any; // Cast to any for Prisma Json[]
+    }
+
+    const updatedResume = await prisma.resume.update({
+      where: {
+        id: resumeId,
+      },
+      data: updateData,
+    });
+
+    return NextResponse.json(updatedResume);
+  } catch (error) {
+    console.error('[Resume Update] Error:', error);
+    if (error instanceof Error && error.message.includes('Unauthorized')) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+    return NextResponse.json({ error: 'Failed to update resume' }, { status: 500 });
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ resumeId: string }> }
+  { params }: RouteParams
 ) {
   try {
-    // Authenticate user
-    const user = await getAuthenticatedUser();
     const { resumeId } = await params;
+    const user = await getAuthenticatedUser();
 
     // Verify ownership
-    const resume = await prisma.resume.findFirst({
+    const existingResume = await prisma.resume.findUnique({
       where: {
         id: resumeId,
         userId: user.id,
       },
     });
 
-    if (!resume) {
-      return NextResponse.json(
-        { error: 'Resume not found or access denied' },
-        { status: 404 }
-      );
+    if (!existingResume) {
+      return NextResponse.json({ error: 'Resume not found' }, { status: 404 });
     }
 
-    // Check if this resume is being used in any job runs
-    const jobRunsCount = await prisma.jobRun.count({
-      where: { resumeId },
-    });
-
-    // Delete from S3
-    try {
-      await deleteFile(resume.s3Key);
-      console.log('[Resume] Deleted from S3:', resume.s3Key);
-    } catch (s3Error) {
-      console.error('[Resume] Failed to delete from S3:', s3Error);
-      // Continue with database deletion even if S3 fails
-    }
-
-    // Delete from database
     await prisma.resume.delete({
-      where: { id: resumeId },
+      where: {
+        id: resumeId,
+      },
     });
 
-    return NextResponse.json({
-      success: true,
-      message: 'Resume deleted successfully',
-      resumeId,
-      hadJobRuns: jobRunsCount > 0,
-    });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[Resume] DELETE error:', error);
-
-    // Handle authentication errors
+    console.error('[Resume Delete] Error:', error);
     if (error instanceof Error && error.message.includes('Unauthorized')) {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
-
-    // Handle foreign key constraint errors
-    if (error instanceof Error && error.message.includes('foreign key')) {
-      return NextResponse.json(
-        {
-          error:
-            'Cannot delete resume as it is being used in job analyses. Please delete the associated analyses first.',
-        },
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to delete resume' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to delete resume' }, { status: 500 });
   }
 }

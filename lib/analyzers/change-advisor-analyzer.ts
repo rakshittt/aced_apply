@@ -113,10 +113,15 @@ CRITICAL REQUIREMENTS:
 
 SUGGESTION TYPES:
 - Add missing skills from gaps (with evidence prompt)
-- Quantify existing accomplishments (add metrics)
+- Quantify Impact: Transform qualitative statements into quantitative ones (e.g., "Improved performance" -> "Reduced latency by 40%")
 - Strengthen weak bullets (action verbs + outcomes)
 - Add relevant keywords for ATS (sparingly!)
 - Improve specificity (technologies, scale, impact)
+
+TONE CHECK:
+- Avoid passive voice (e.g., "was responsible for")
+- Avoid weak verbs (e.g., "helped", "worked on")
+- Use strong action verbs (e.g., "Architected", "Deployed", "Optimized")
 
 ATS WARNINGS:
 Also identify any ATS-hostile formatting:
@@ -126,7 +131,13 @@ Also identify any ATS-hostile formatting:
 - Low-contrast text
 - Over-designed PDFs
 
-Return structured JSON with suggestions and warnings.`;
+BS DETECTOR (ANTI-FLUFF):
+Identify "zero-calorie" words and clichés that weaken the resume. Populate 'fluffWords' with these.
+- Examples: "passionate", "seasoned", "visionary", "go-getter", "synergy", "thought leader"
+- Any adjective that is not backed by a metric is suspect.
+- Flag vague phrases like "responsible for", "participated in", "helped with".
+
+Return structured JSON with suggestions, warnings, and fluff words.`;
 }
 
 /**

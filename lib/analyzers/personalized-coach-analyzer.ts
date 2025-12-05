@@ -84,6 +84,8 @@ For each criterion:
 - **whyItMatters**: Why this matters for THIS specific role (cite JD evidence)
 - **yourGaps**: List the candidate's specific gaps related to this criterion (from SKILL GAPS above)
 - **howToPrepare**: Actionable preparation advice tailored to their gaps
+- **failureModes**: 2-3 common ways candidates fail this specific assessment
+- **followUpQuestions**: 2-3 likely follow-up questions they might ask
 
 CRITICAL: Focus on criteria where the candidate HAS GAPS. Don't waste time on strengths.
 
@@ -140,6 +142,8 @@ briefly explain what this means for interview preparation and how to demonstrate
 - whyItMatters: "JD requires 'designing scalable microservices architectures' and 'handling high-throughput data pipelines'"
 - yourGaps: ["Kafka/RabbitMQ", "Service mesh patterns", "Circuit breaker design"]
 - howToPrepare: "Focus on studying event-driven architecture patterns. Review Kafka basics and prepare to discuss any async messaging you've done (even if not Kafka). Study the Retry/Circuit Breaker pattern with concrete examples."
+- failureModes: ["Over-engineering simple solutions", "Ignoring failure scenarios (network partitions)", "Not discussing trade-offs (consistency vs availability)"]
+- followUpQuestions: ["How would you handle a sudden 10x spike in traffic?", "What happens if the message broker goes down?", "How do you ensure exactly-once processing?"]
 
 **Good "Recruiter Insight" entry:**
 - priority: CRITICAL

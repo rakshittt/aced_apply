@@ -114,11 +114,16 @@ export interface BehaviorCues {
 }
 
 export interface ParsedResumeSections {
+  summary?: string;
   experience: ResumeExperienceItem[];
   skills: string[];
   education: EducationItem[];
   projects?: ProjectItem[];
   certifications?: string[];
+  custom?: {
+    title: string;
+    items: string[];
+  }[];
 }
 
 export interface ResumeExperienceItem {

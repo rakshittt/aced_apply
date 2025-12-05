@@ -12,6 +12,13 @@ import type { ParsedJD, BehaviorCues } from '@/types';
  */
 export async function fetchJDFromURL(url: string): Promise<string> {
   try {
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch {
+      throw new Error('Invalid URL format');
+    }
+
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; AcedApply/1.0)',

@@ -125,11 +125,10 @@ export default function ResumeManager() {
           {resumes.map((resume) => (
             <div
               key={resume.id}
-              className={`p-4 border rounded-lg ${
-                resume.isDefault
-                  ? 'border-green-300 bg-green-50'
-                  : 'border-slate-200 bg-white'
-              }`}
+              className={`p-4 border rounded-lg ${resume.isDefault
+                ? 'border-green-300 bg-green-50'
+                : 'border-slate-200 bg-white'
+                }`}
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -154,6 +153,8 @@ export default function ResumeManager() {
                 </div>
 
                 <div className="flex items-center gap-2 ml-4">
+
+
                   {!resume.isDefault && (
                     <Button
                       variant="outline"
